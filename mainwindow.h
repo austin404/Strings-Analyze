@@ -3,7 +3,6 @@
 
 #include <QMainWindow>
 #include <QRegExp>
-#include <QThread>
 #include <QProgressBar>
 
 QT_BEGIN_NAMESPACE
@@ -36,16 +35,18 @@ private:
     };
 
     QVector<PatternData> pattern_data;
+    QString removeNonPritables(QString str);
+    QVector<PatternData> parsePattern(QString path);
+    QPair<QString, QBrush> getType(int code);
 
     void resizeEvent(QResizeEvent *);
     void initComponents();
     void readPatterns();
-    QVector<PatternData> parsePattern(QString path);
     void addDataToTable(PatternData);
     void addRowData(QString text, QBrush color, int col, bool isBold = false);
-    QPair<QString, QBrush> getType(int code);
     void searchPatterns(QString path);
-    QString removeNonPritables(QString str);
+    void recursiveFileOpen(QString path);
+    void noPatternFoundMsg();
 };
 
 #endif // MAINWINDOW_H

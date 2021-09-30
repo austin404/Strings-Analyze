@@ -40,7 +40,7 @@ void MainWindow ::FileDialog()
     QString filename = QFileDialog ::getOpenFileName(
         this,
         "Select strings dump file",
-        QDir ::currentPath(),
+        QDir ::homePath(),
         "All files (*.*)");
 
     if (!filename.isNull())
@@ -57,24 +57,14 @@ void MainWindow ::FileDialog()
 void MainWindow ::readPatterns()
 {
     QDir dir = QDir();
-    if (dir.exists("strings-analyze-patterns/Patterns/Unreal Security"))
-    {
-        dir.cd("strings-analyze-patterns/Patterns/Unreal Security");
 
-        QFileInfoList file_list = dir.entryInfoList(QDir::Filter::NoDotAndDotDot | QDir::Filter::Files);
-        for (QFileInfo &x : file_list)
-        {
-            if (x.exists())
-            {
-                QVector<PatternData> pd_list = parsePattern(x.absoluteFilePath());
-                pattern_data.append(pd_list);
-            }
-        }
+    if (dir.exists("strings-analyze-patterns/Patterns/"))
+    {
+        recursiveFileOpen(dir.currentPath() + "/strings-analyze-patterns/Patterns");
     }
     else
     {
         QMessageBox msg;
-        QDir dir;
         msg.setWindowTitle("Patter Folder not found");
         msg.setText("<b>strings-analyze-patterns folder was not found<b>");
         msg.setTextFormat(Qt::TextFormat::RichText);
@@ -88,6 +78,36 @@ void MainWindow ::readPatterns()
     }
 }
 
+void MainWindow ::recursiveFileOpen(QString path)
+{
+    QDir dir = QDir(path);
+    QFileInfoList fileList = dir.entryInfoList(QDir ::Filter ::NoDotAndDotDot | QDir::Filter ::AllEntries);
+    for (QFileInfo &f : fileList)
+    {
+        if (f.isDir())
+            recursiveFileOpen(f.absoluteFilePath());
+        else if (f.isFile())
+        {
+            QVector<PatternData> pd_list = parsePattern(f.absoluteFilePath());
+            this->pattern_data.append(pd_list);
+        }
+        else
+        {
+            // Why do you even exist ?
+        }
+    }
+}
+
+void MainWindow::noPatternFoundMsg()
+{
+    QMessageBox msg;
+    msg.setWindowTitle("No Patterns Found");
+    msg.setText("<b>No Patterns Found");
+    msg.setTextFormat(Qt::TextFormat::RichText);
+    msg.setIcon(QMessageBox ::Information);
+    msg.exec();
+}
+
 // UwU pattern Parser
 QVector<MainWindow::PatternData> MainWindow ::parsePattern(QString path)
 {
@@ -96,7 +116,6 @@ QVector<MainWindow::PatternData> MainWindow ::parsePattern(QString path)
 
     QFile f(path);
     f.open(QIODevice::ReadOnly);
-
     while (!f.atEnd())
     {
 
@@ -197,6 +216,7 @@ void MainWindow::addDataToTable(PatternData pd)
 void MainWindow ::addRowData(QString text, QBrush color, int col, bool is_bold)
 {
     QTableWidgetItem *ti = new QTableWidgetItem();
+
     ti->setForeground(color);
     ti->setText(text);
 
@@ -251,13 +271,16 @@ void MainWindow::searchPatterns(QString path)
 
     while (!f.atEnd())
     {
-        lines.push_back(f.readLine().trimmed());
+        lines.push_back(f.readLine().trimmed().replace('\u0000', ""));
     }
 
     // For progress bar
     qsizetype total_lines = lines.size();
     ui->progressBar->setMinimum(0);
-    ui->progressBar->setMaximum(total_lines);
+    ui->progressBar->setMaximum(total_lines != 0 ? total_lines : 100);
+
+    if (total_lines == 0)
+        ui->progressBar->setValue(100);
 
     qsizetype i = 1;
 
@@ -265,7 +288,6 @@ void MainWindow::searchPatterns(QString path)
 
     for (QString &line : lines)
     {
-
         for (PatternData &pd : pattern_data)
         {
             if (pd.flags.contains('i'))
@@ -285,6 +307,11 @@ void MainWindow::searchPatterns(QString path)
         QApplication ::processEvents(); // This is so that the screen doesn't freeze
         ++i;
     }
+
+    if(matched_pattern.size() == 0)
+        noPatternFoundMsg();
+
+
     for (PatternData &pd : matched_pattern)
     {
         addDataToTable(pd);
@@ -300,10 +327,10 @@ QString MainWindow::removeNonPritables(QString str)
     QString temp;
     for (QChar &s : str)
     {
-        if (s >= QChar(32) && s <= QChar(32 + 94))
+        if (s >= QChar(32) && s <= QChar(32 + 95))
             temp.push_back(s);
     }
-    return temp;
+    return temp.trimmed();
 }
 
 // Resizing progress bar and table when the MainWindow resizes
