@@ -2,8 +2,9 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QRegExp>
 #include <QProgressBar>
+#include "config.h"
+#include "mythread.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -23,30 +24,33 @@ public:
 
 private:
     Ui::MainWindow *ui;
-    struct PatternData
-    {
-        int code;
-        QString type;
-        QString description;
-        QRegExp pattern;
-        QString flags;
-        qsizetype line_number;
-        QString matched_string;
-    };
-
     QVector<PatternData> pattern_data;
+    QStringList lines;
+    QVector<PatternData> matchedPattern;
+    qsizetype lineFinished;
+    QString mimeType;
+    int numberOfthreads = 4;
+    QVector<MyThread *> threads;
+    bool noPatterns = false;
+    bool patternsPrinted = false;
+
+    void resizeEvent(QResizeEvent *);
     QString removeNonPritables(QString str);
     QVector<PatternData> parsePattern(QString path);
     QPair<QString, QBrush> getType(int code);
-
-    void resizeEvent(QResizeEvent *);
     void initComponents();
     void readPatterns();
     void addDataToTable(PatternData);
     void addRowData(QString text, QBrush color, int col, bool isBold = false);
+    void addRowData(int text, QBrush color, int col, bool isBold = false);
     void searchPatterns(QString path);
     void recursiveFileOpen(QString path);
     void noPatternFoundMsg();
+    void threadParsePattern(qsizetype start, qsizetype end);
+
+private slots:
+    void onProgress();
+    void onComplete(QVector<PatternData>);
 };
 
 #endif // MAINWINDOW_H

@@ -1,5 +1,5 @@
 QT       += core gui
-QT       += core5compat
+
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -11,10 +11,13 @@ CONFIG += c++17
 
 SOURCES += \
     main.cpp \
-    mainwindow.cpp
+    mainwindow.cpp \
+    mythread.cpp
 
 HEADERS += \
-    mainwindow.h
+    config.h \
+    mainwindow.h \
+    mythread.h
 
 FORMS += \
     mainwindow.ui

@@ -1,7 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-#include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileInfoList>
@@ -10,7 +9,7 @@
 #include <QVector>
 #include <QMessageBox>
 #include <QMimeDatabase>
-#include <iostream>
+#include <mythread.h>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
@@ -28,9 +27,12 @@ void MainWindow::initComponents()
 
     // Table Widget
     ui->tableWidget->setEditTriggers(QTableWidget ::NoEditTriggers);
+    ui->tableWidget->verticalHeader()->setVisible(false);
+    ui->tableWidget->horizontalHeader()->setFixedHeight(35);
+    ui->tableWidget->horizontalHeader()->setDefaultAlignment(Qt ::AlignLeft | Qt::AlignVCenter);
     ui->tableWidget->horizontalHeader()->setStretchLastSection(true);
-    ui->tableWidget->horizontalHeader()->setSectionResizeMode(3, QHeaderView ::Stretch);
     ui->tableWidget->setSortingEnabled(true);
+    ui->tableWidget->verticalHeader()->setDefaultAlignment(Qt::AlignTop);
 }
 
 // Nothing fancy here
@@ -45,6 +47,8 @@ void MainWindow ::FileDialog()
 
     if (!filename.isNull())
     {
+        QStringList temp = filename.split("/");
+        this->setWindowTitle("Strings Analyze: " + temp[temp.size() - 1]);
         searchPatterns(filename);
     }
     else
@@ -86,7 +90,7 @@ void MainWindow ::recursiveFileOpen(QString path)
     {
         if (f.isDir())
             recursiveFileOpen(f.absoluteFilePath());
-        else if (f.isFile())
+        else if (f.isFile() && f.fileName().right(4) == ".pat")
         {
             QVector<PatternData> pd_list = parsePattern(f.absoluteFilePath());
             this->pattern_data.append(pd_list);
@@ -108,8 +112,45 @@ void MainWindow::noPatternFoundMsg()
     msg.exec();
 }
 
+void MainWindow::onProgress()
+{
+    this->lineFinished++;
+    this->ui->progressBar->setValue(this->lineFinished);
+}
+
+void MainWindow::onComplete(QVector<PatternData> pdList)
+{
+
+    this->matchedPattern.append(pdList);
+
+    for (auto thread : this->threads)
+    {
+        if (thread->isRunning())
+            return;
+    }
+
+    ui->tableWidget->setRowCount(0); // Clearing table everytime new results comes
+
+    for (PatternData &pd : this->matchedPattern)
+    {
+        pd.matched_string = this->mimeType.contains("text/") ? pd.matched_string : removeNonPritables(pd.matched_string);
+        addDataToTable(pd);
+    }
+
+    if (this->matchedPattern.size() == 0 && !this->noPatterns)
+    {
+        this->ui->progressBar->setValue(this->lines.size());
+        this->noPatterns = true;
+        noPatternFoundMsg();
+        return;
+    }
+
+    ui->tableWidget->resizeRowsToContents(); // For Word Wrap
+    ui->tableWidget->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+}
+
 // UwU pattern Parser
-QVector<MainWindow::PatternData> MainWindow ::parsePattern(QString path)
+QVector<PatternData> MainWindow ::parsePattern(QString path)
 {
 
     QVector<PatternData> pd_list;
@@ -159,13 +200,13 @@ QVector<MainWindow::PatternData> MainWindow ::parsePattern(QString path)
                         {
                             temp += line.at(i);
                         }
-                        else if (line.at(i) == '"' && line.at(i - 1) == '\\' && line.at(i - 2) == '\\' && line.at(i - 3) == '\\')
+                        else if (line.at(i) == '"' && line.at(i - 1) == '\\' && line.at(i - 2) == '\\' && line.at(i - 3) == '\\' && line.at(i - 4) != '\\')
                             temp += line.at(i);
                         else
                             break;
                         ++i;
                     }
-                    temp_list.push_back(temp.trimmed());
+                    temp_list.push_back(temp.trimmed().replace(R"(\\\\\)", R"(\)").replace(R"(\\\\)", R"(\\)"));
                     temp = "";
                     is_quote = false;
                 }
@@ -178,14 +219,16 @@ QVector<MainWindow::PatternData> MainWindow ::parsePattern(QString path)
                 pd.code = temp_list.at(0).toInt();
                 pd.type = temp_list.at(1);
                 pd.description = temp_list.at(2);
-                QRegExp reg;
-                reg.setPattern(temp_list.at(3));
+                QRegularExpression reg(temp_list.at(3));
                 pd.pattern = reg;
             }
 
             if (temp_list.size() == 5)
+            {
                 pd.flags = temp_list.at(4);
-
+                if (pd.flags.contains("i"))
+                    pd.pattern = QRegularExpression(temp_list.at(3), QRegularExpression ::CaseInsensitiveOption);
+            }
             pd_list.push_back(pd);
             temp_list.clear();
         }
@@ -206,22 +249,42 @@ void MainWindow::addDataToTable(PatternData pd)
     bool is_bold = pd.code == 1; // This is for bold text for "Interesting"
 
     addRowData(pair.first, pair.second, 0, is_bold);
-    addRowData(QString::number(pd.line_number), pair.second, 1, is_bold);
+    addRowData(pd.line_number, pair.second, 1, is_bold);
     addRowData(pd.type, pair.second, 2, is_bold);
     addRowData(pd.description, pair.second, 3, is_bold);
     addRowData(pd.matched_string, pair.second, 4, is_bold);
 }
 
 // Adding data to a single row
-void MainWindow ::addRowData(QString text, QBrush color, int col, bool is_bold)
+void MainWindow::addRowData(QString text, QBrush color, int col, bool isBold)
 {
     QTableWidgetItem *ti = new QTableWidgetItem();
 
     ti->setForeground(color);
-    ti->setText(text);
+    ti->setText(text.trimmed());
+    ti->setTextAlignment(Qt ::AlignLeft | Qt ::AlignTop);
+    // Set Bold if necessary
+    if (isBold)
+    {
+        QFont font;
+        font.setBold(true);
+        ti->setFont(font);
+    }
+
+    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, col, ti);
+}
+
+// Adding data to a single row for integer column
+void MainWindow ::addRowData(int text, QBrush color, int col, bool isBold)
+{
+    QTableWidgetItem *ti = new QTableWidgetItem();
+
+    ti->setForeground(color);
+    ti->setData(Qt ::EditRole, text);
+    ti->setTextAlignment(Qt ::AlignRight | Qt ::AlignTop);
 
     // Set Bold if necessary
-    if (is_bold)
+    if (isBold)
     {
         QFont font;
         font.setBold(true);
@@ -265,60 +328,51 @@ void MainWindow::searchPatterns(QString path)
 {
     QFile f(path);
     f.open(QIODevice::ReadOnly);
-    QString mimeType = QMimeDatabase().mimeTypeForFile(path).name();
-
-    QVector<QString> lines;
+    this->mimeType = QMimeDatabase().mimeTypeForFile(path).name();
 
     while (!f.atEnd())
     {
-        lines.push_back(f.readLine().trimmed().replace('\u0000', ""));
+        this->lines.push_back(f.readLine().trimmed().replace('\u0000', ""));
     }
 
     // For progress bar
-    qsizetype total_lines = lines.size();
+    qsizetype total_lines = this->lines.size();
     ui->progressBar->setMinimum(0);
     ui->progressBar->setMaximum(total_lines != 0 ? total_lines : 100);
 
     if (total_lines == 0)
+    {
         ui->progressBar->setValue(100);
-
-    qsizetype i = 1;
-
-    QVector<PatternData> matched_pattern;
-
-    for (QString &line : lines)
-    {
-        for (PatternData &pd : pattern_data)
-        {
-            if (pd.flags.contains('i'))
-                pd.pattern.setCaseSensitivity(Qt::CaseInsensitive);
-            if (pd.pattern.indexIn(line) != -1)
-            {
-                if (pd.flags.contains('f'))
-                    pd.matched_string = mimeType == "text/plain" ? line : removeNonPritables(line);
-                else
-                    pd.matched_string = pd.pattern.cap(0);
-                pd.line_number = i;
-                matched_pattern.push_back(pd);
-            }
-        }
-
-        ui->progressBar->setValue(i);   // Increasing the progress bar
-        QApplication ::processEvents(); // This is so that the screen doesn't freeze
-        ++i;
-    }
-
-    if(matched_pattern.size() == 0)
         noPatternFoundMsg();
-
-
-    for (PatternData &pd : matched_pattern)
-    {
-        addDataToTable(pd);
+        return;
     }
 
-    ui->tableWidget->resizeRowsToContents(); // For Word Wrap
     f.close();
+
+    this->lineFinished = 1;
+
+    int factor = this->lines.size() / this->numberOfthreads;
+
+    if (lines.size() < numberOfthreads)
+    {
+        factor = this->lines.size();
+        numberOfthreads = 1;
+    }
+
+    for (qsizetype i = 0, t = 0; t < this->numberOfthreads; i += factor, ++t)
+    {
+        qsizetype end = i + factor < this->lines.size() ? i + factor : this->lines.size() - 1;
+        if (t == this->numberOfthreads - 1)
+            end = this->lines.size() - 1;
+
+        MyThread *p = new MyThread(this, this->lines, i, end, pattern_data);
+        QObject ::connect(p, SIGNAL(emitProgress()), this, SLOT(onProgress()));
+        QObject ::connect(p, SIGNAL(emitComplete(QVector<PatternData>)), this, SLOT(onComplete(QVector<PatternData>)));
+        this->threads.push_back(p);
+    }
+
+    for (const auto thread : this->threads)
+        thread->start();
 }
 
 QString MainWindow::removeNonPritables(QString str)
@@ -339,6 +393,15 @@ void MainWindow ::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
     ui->progressBar->setGeometry(0, 0, width(), 10);
     ui->tableWidget->setGeometry(0, 10, width(), height() - 31);
+    ui->tableWidget->setColumnWidth(1, 150);
+
+    int temp = 0;
+    for (int i = 0; i < 3; ++i)
+        temp += ui->tableWidget->columnWidth(i);
+
+    int y = (width() - temp) / 2;
+
+    ui->tableWidget->setColumnWidth(3, y);
 }
 
 MainWindow::~MainWindow()
